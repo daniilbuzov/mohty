@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Мой Мессенджер</title>
     <style>
         /* ===== БАЗОВЫЕ ПЕРЕМЕННЫЕ ===== */
@@ -567,7 +567,7 @@
             return `messages/servers/${server}/${channel}`;
         }
 
-        // ========== ПРОСЛУШИВАНИЕ ЧАТОВ (С УВЕДОМЛЕНИЯМИ) ==========
+        // ========== ПРОСЛУШИВАНИЕ ЧАТОВ ==========
         function listenToChat(server, channel) {
             const path = getChatPath(server, channel);
             if (path === activeChatPath && chatListener) return;
@@ -628,7 +628,7 @@
             }
         }
 
-        // ========== ОТОБРАЖЕНИЕ СООБЩЕНИЙ (ФОТО, ВИДЕО, ГОЛОС) ==========
+        // ========== ОТОБРАЖЕНИЕ СООБЩЕНИЙ ==========
         function renderMessages(msgs) {
             const area = $('messagesArea');
             area.innerHTML = '';
@@ -700,7 +700,7 @@
             area.scrollTop = area.scrollHeight;
         }
 
-        // ========== ОТПРАВКА СООБЩЕНИЙ (С ПОДДЕРЖКОЙ ФОТО/ВИДЕО) ==========
+        // ========== ОТПРАВКА СООБЩЕНИЙ ==========
         async function sendMessage(text, imageUrl = null, drawingData = null, videoData = null) {
             if (!currentUser) return;
             if (currentServer === 'direct' && currentChannel === 'global' && globalBansCache[currentUser.username]) {
@@ -891,18 +891,80 @@
             }
         }
 
-        // ========== ДРУЗЬЯ И СЕРВЕРЫ (БЕЗ ИЗМЕНЕНИЙ) ==========
-        async function sendFriendRequest(toUsername) { /* ... */ }
-        async function acceptFriendRequest(fromUsername) { /* ... */ }
-        async function declineFriendRequest(fromUsername) { /* ... */ }
-        async function createServer(name) { /* ... */ }
-        async function sendServerRequest(serverId) { /* ... */ }
-        async function acceptServerRequest(serverId, username) { /* ... */ }
-        async function declineServerRequest(serverId, username) { /* ... */ }
-        async function banUser(serverId, username) { /* ... */ }
-        async function unbanUser(serverId, username) { /* ... */ }
-        async function setServerIcon(serverId, url) { /* ... */ }
-        // (эти функции идентичны предыдущей версии, я их оставляю без изменений)
+        // ========== ДРУЗЬЯ И СЕРВЕРЫ ==========
+        async function sendFriendRequest(toUsername) {
+            if (toUsername === currentUser.username) { showToast('Нельзя добавить самого себя'); return; }
+            const snap = await db.ref(`users/${toUsername}`).once('value');
+            if (!snap.exists()) { showToast('Пользователь не найден'); return; }
+            if (friendsCache[toUsername] === 'accepted') { showToast('Вы уже друзья'); return; }
+            await db.ref(`friends/${currentUser.username}/${toUsername}`).set('pending');
+            await db.ref(`friends/${toUsername}/${currentUser.username}`).set('incoming');
+            showToast('Заявка отправлена');
+        }
+        async function acceptFriendRequest(fromUsername) {
+            await db.ref(`friends/${currentUser.username}/${fromUsername}`).set('accepted');
+            await db.ref(`friends/${fromUsername}/${currentUser.username}`).set('accepted');
+            showToast(`Вы приняли заявку от ${fromUsername}`);
+        }
+        async function declineFriendRequest(fromUsername) {
+            await db.ref(`friends/${currentUser.username}/${fromUsername}`).remove();
+            await db.ref(`friends/${fromUsername}/${currentUser.username}`).remove();
+            showToast('Заявка отклонена');
+        }
+
+        async function createServer(name) {
+            const ref = db.ref('servers').push();
+            const data = {
+                name,
+                owner: currentUser.username,
+                icon: '',
+                channels: { general: { name: 'общий' } },
+                members: { [currentUser.username]: true },
+                requests: {},
+                banned: {}
+            };
+            await ref.set(data);
+            serversCache[ref.key] = data;
+            switchServer(ref.key);
+            $('serverModal').classList.remove('open');
+            $('serverNameInput').value = '';
+        }
+
+        async function sendServerRequest(serverId) {
+            if (!serversCache[serverId]) return;
+            const members = serversCache[serverId].members || {};
+            if (members[currentUser.username]) { showToast('Вы уже участник'); return; }
+            const requests = serversCache[serverId].requests || {};
+            if (requests[currentUser.username]) { showToast('Заявка уже подана'); return; }
+            await db.ref(`servers/${serverId}/requests/${currentUser.username}`).set('pending');
+            showToast('Заявка на сервер отправлена');
+        }
+        async function acceptServerRequest(serverId, username) {
+            await db.ref(`servers/${serverId}/members/${username}`).set(true);
+            await db.ref(`servers/${serverId}/requests/${username}`).remove();
+            showToast(`Пользователь ${username} принят`);
+        }
+        async function declineServerRequest(serverId, username) {
+            await db.ref(`servers/${serverId}/requests/${username}`).remove();
+            showToast(`Заявка от ${username} отклонена`);
+        }
+        async function banUser(serverId, username) {
+            if (!isServerOwner(serverId)) { showToast('Только владелец сервера может банить'); return; }
+            if (serversCache[serverId].owner === username) { showToast('Нельзя забанить владельца'); return; }
+            await db.ref(`servers/${serverId}/banned/${username}`).set(true);
+            await db.ref(`servers/${serverId}/members/${username}`).remove();
+            showToast(`${username} забанен`);
+        }
+        async function unbanUser(serverId, username) {
+            if (!isServerOwner(serverId)) { showToast('Только владелец сервера может разбанивать'); return; }
+            await db.ref(`servers/${serverId}/banned/${username}`).remove();
+            showToast(`${username} разбанен`);
+        }
+        async function setServerIcon(serverId, url) {
+            if (!canManageServer(serverId)) return;
+            await db.ref(`servers/${serverId}/icon`).set(url);
+            showToast('Иконка обновлена');
+        }
 
         // ========== UI ==========
         function renderServerBar() {
@@ -1280,7 +1342,7 @@
             document.documentElement.setAttribute('data-theme', saved);
         })();
 
-        // ========== ЗВОНКИ (ТОЛЬКО АУДИО) ==========
+        // ========== ЗВОНКИ ==========
         function generateCallId() {
             return `${currentUser.username}_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
         }
@@ -1294,7 +1356,6 @@
         function showCallModal(html) {
             callContent.innerHTML = html;
             callModal.classList.add('open');
-            // Настройка кнопки mute
             const muteBtn = document.getElementById('muteBtn');
             if (muteBtn) {
                 muteBtn.onclick = () => {
@@ -1312,19 +1373,9 @@
             callContent.innerHTML = '';
         }
         async function hangUp() {
-            console.log('[Звонок] Завершение звонка');
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            if (remoteStream) {
-                remoteStream.getTracks().forEach(track => track.stop());
-                remoteStream = null;
-            }
+            if (peerConnection) { peerConnection.close(); peerConnection = null; }
+            if (localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; }
+            if (remoteStream) { remoteStream.getTracks().forEach(track => track.stop()); remoteStream = null; }
             if (currentCallId) {
                 await db.ref(`calls/${currentCallId}/status`).set('ended');
                 if (callSignalListener) {
@@ -1349,10 +1400,7 @@
             window._incomingCallId = null;
         }
 
-        // ===== ПРИНЯТИЕ ЗВОНКА =====
         async function acceptCall(callId) {
-            console.log('[Звонок] Принятие звонка', callId);
-            // Очистка предыдущего соединения
             if (peerConnection) { peerConnection.close(); peerConnection = null; }
             if (localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; }
             if (callSignalListener && currentCallId) {
@@ -1384,7 +1432,6 @@
                     if (event.candidate) sendSignal(callId, { type: 'ice', candidate: event.candidate });
                 };
 
-                // Получаем offer
                 const signalsRef = db.ref(`calls/${callId}/signals`);
                 let offerSignal = null;
                 const snap = await signalsRef.orderByChild('timestamp').once('value');
@@ -1478,7 +1525,6 @@
             });
         }
 
-        // ===== НАЧАЛО ЗВОНКА =====
         async function startCall(targetUser) {
             if (!targetUser || targetUser === currentUser.username) {
                 showToast('Нельзя позвонить самому себе');
@@ -1492,7 +1538,6 @@
                 showToast('Вы не друзья с этим пользователем');
                 return;
             }
-            // Очистка
             if (peerConnection) { peerConnection.close(); peerConnection = null; }
             if (localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; }
             if (callSignalListener && currentCallId) {
